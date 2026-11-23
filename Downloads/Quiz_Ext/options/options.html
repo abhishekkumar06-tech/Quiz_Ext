@@ -13,7 +13,7 @@
     button { margin-top: 24px; padding: 10px 18px; border: 0; border-radius: 8px; background: #111; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
     #out { margin-top: 16px; white-space: pre-wrap; font-size: 13px; background: #f6f6f6; border-radius: 8px; padding: 10px; }
     #out:empty { display: none; }
-    .ok { color: #146c2e; } .err { color: #a1261f; }
+    .ok { color: #146c2e; } .err { color: #a1261f; } .muted { color: #666; }
   </style>
 </head>
 <body>
@@ -26,11 +26,11 @@
 
   <label for="geminiKey">Google Gemini API key <span class="muted">(for image questions)</span></label>
   <input id="geminiKey" type="password" autocomplete="off" placeholder="AIza…">
-  <div class="hint">Free at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>. Reads diagrams, trees and tables in image questions. The free tier allows about 20 requests/day per model, so the solver rotates through all Gemini Flash models (~100 image questions/day). When all are used up it falls back to Qwen on Groq.</div>
+  <div class="hint">Free at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>. Reads diagrams, trees and tables in image questions. Limits vary by model and Google project; daily request quotas reset at midnight Pacific time. The solver uses configured model fallbacks, then can fall back to Groq.</div>
 
   <label for="thinking">Thinking depth</label>
   <select id="thinking" style="width:100%;padding:9px 10px;border:1px solid #ccc;border-radius:8px;font:inherit;margin-top:6px">
-    <option value="medium">Medium (recommended: accurate, half the tokens of High)</option>
+    <option value="medium">Medium (recommended)</option>
     <option value="high">High (slowest, uses the free limit fastest)</option>
     <option value="low">Low (fastest, may slip on tricky code questions)</option>
   </select>

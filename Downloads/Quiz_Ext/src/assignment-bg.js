@@ -73,11 +73,12 @@ async function generateCode(job, settings, onProgress = () => {}) {
   const effort = job.history?.length ? 'high' : 'medium';
   const chain = [];
   if (settings.groqKey && settings.groqModels?.length) {
-    // One primary model per provider avoids spending quota walking a long model list.
-    chain.push({ provider: 'groq', key: settings.groqKey, models: settings.groqModels.slice(0, 1), reasoning: job.databaseMode && job.history?.length ? 'low' : effort });
+    // Pass configured fallbacks through to chat(); exhausted models are skipped without
+    // another request, and the first available model handles the question.
+    chain.push({ provider: 'groq', key: settings.groqKey, models: settings.groqModels, reasoning: job.databaseMode ? 'low' : effort });
   }
   if (settings.geminiKey && settings.geminiModels?.length) {
-    chain.push({ provider: 'gemini', key: settings.geminiKey, models: settings.geminiModels.slice(0, 1), reasoning: job.databaseMode && job.history?.length ? 'low' : effort === 'high' ? 'high' : 'low' });
+    chain.push({ provider: 'gemini', key: settings.geminiKey, models: settings.geminiModels, reasoning: job.databaseMode ? 'low' : effort === 'high' ? 'high' : 'low' });
   }
   // Alternate provider families after each graded failure instead of spending two
   // submissions retrying the same model family with only a generic Wrong Answer signal.

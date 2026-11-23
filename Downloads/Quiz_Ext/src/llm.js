@@ -5,7 +5,7 @@
 // exhausted models are skipped until their quota resets.
 
 // Bump when model preferences change so stored model picks are refreshed.
-export const MODELS_VERSION = 6;
+export const MODELS_VERSION = 7;
 
 export const PROVIDERS = {
   gemini: {
@@ -48,6 +48,11 @@ export function parseRetryMs(errText, retryAfterHeader) {
   }
   const g = errText.match(/"retryDelay":\s*"([\d.]+)s"/i);
   if (g) return Number(g[1]) * 1000 + 300;
+  const d = String(retryAfterHeader || '').match(/^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i);
+  if (d?.[0]) {
+    const ms = (Number(d[1] || 0) * 3600 + Number(d[2] || 0) * 60 + Number(d[3] || 0)) * 1000;
+    if (ms > 0) return Math.ceil(ms);
+  }
   const h = Number(retryAfterHeader);
   return h ? h * 1000 : null;
 }
@@ -124,7 +129,6 @@ function markExhausted(provider, model, until) {
   exhausted.set(`${provider}:${model}`, until);
   onExhaustedChange?.(Object.fromEntries(exhausted));
 }
-const isExhausted = (provider, model) => (exhausted.get(`${provider}:${model}`) || 0) > Date.now();
 
 // ---------- Concurrency ----------
 
@@ -187,7 +191,11 @@ export async function chat({ provider, key, models, messages, reasoning = 'high'
   try {
     let lastErr;
     for (const model of models) {
-      if (isExhausted(provider, model)) { onStatus?.(`Skipping ${model}: its quota is exhausted`); continue; }
+      const blockedUntil = exhausted.get(`${provider}:${model}`) || 0;
+      if (blockedUntil > Date.now()) {
+        onStatus?.(`Skipping ${model}: quota cooldown until ${new Date(blockedUntil).toLocaleString()}`);
+        continue;
+      }
       onStatus?.(`Requesting ${model}…`);
       let useReasoning = reasoning;
       for (let attempt = 0; attempt < 6; attempt++) {
@@ -203,10 +211,20 @@ export async function chat({ provider, key, models, messages, reasoning = 'high'
           continue;
         }
         if (res.ok) {
-          const text = reqSpec.parse(await res.json());
+          const json = await res.json();
+          const text = reqSpec.parse(json);
           if (!text.trim()) { lastErr = new Error(`${model}: empty response`); await sleep(1500); continue; }
           onStatus?.(`Received a response from ${model}`);
-          return { text, model };
+          const u = json.usage || json.usageMetadata || {};
+          return {
+            text, model,
+            usage: {
+              input: u.prompt_tokens ?? u.promptTokenCount ?? 0,
+              output: u.completion_tokens ?? u.candidatesTokenCount ?? 0,
+              reasoning: u.completion_tokens_details?.reasoning_tokens ?? u.thoughtsTokenCount ?? 0,
+              total: u.total_tokens ?? u.totalTokenCount ?? 0,
+            },
+          };
         }
         const errText = await res.text();
         lastErr = new Error(`${p.label} ${model}: ${res.status} ${errText.slice(0, 300)}`);
@@ -219,8 +237,14 @@ export async function chat({ provider, key, models, messages, reasoning = 'high'
         if (res.status === 400) break; // try next model
         if (res.status === 429) {
           if (/PerDay|per.?day|daily|RequestsPerDay|tokens per day|TPD|RPD|limit:\s*0\b/i.test(errText)) {
-            markExhausted(provider, model, provider === 'gemini' ? nextPacificMidnight() : Date.now() + 3600e3);
-            onStatus?.(`${model} daily limit reached, switching model`);
+            const groqReset = provider === 'groq' && !/tokens per day|\bTPD\b/i.test(errText)
+              ? parseRetryMs('', res.headers.get('x-ratelimit-reset-requests'))
+              : null;
+            const until = provider === 'gemini'
+              ? nextPacificMidnight()
+              : Date.now() + (groqReset || 24 * 3600e3);
+            markExhausted(provider, model, until);
+            onStatus?.(`${model} daily quota reached; retry after ${new Date(until).toLocaleString()}`);
             break;
           }
           const wait = parseRetryMs(errText, res.headers.get('retry-after')) ?? 5000 * (attempt + 1);

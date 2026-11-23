@@ -191,10 +191,10 @@
   const $ = (s) => root.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   function setStatus(html) { $('.panel').hidden = false; $('.status').innerHTML = html; }
-  function showQuotaPopup() {
+  function showQuotaPopup(detail = '') {
     const popup = $('.quota-popup');
     $('.quota-popup strong').textContent = 'Daily AI quota reached';
-    $('.quota-message').textContent = 'All configured Groq and Google Gemini models have reached their daily quota. The solver is paused on this question; this quota failure did not use a submission attempt. Resume after quota resets or update your API keys.';
+    $('.quota-message').textContent = 'No configured model is currently available. The solver is paused on this question; no submission attempt was used. Provider details: ' + (detail || 'see the run log');
     popup.hidden = false;
     $('.panel').hidden = false;
   }
@@ -537,12 +537,14 @@
 
   // Some playgrounds show a bare language label ("MongoDB") while others include a version.
   const LANG_RE = /^[A-Za-z][A-Za-z0-9+# ]*(?:\s*\([^)]*\))?$/;
+  const EDITOR_LANGUAGE_RE = /^(?:python|javascript|js|typescript|ts|java|c(?:\+\+|#)?|go|golang|rust|ruby|kotlin|swift|scala|php|sql|postgres(?:ql)?|mysql|mariadb|mongodb|verilog|systemverilog|vhdl|r|csharp)(?:\s*\d+(?:\.\d+)*)?(?:\s*\([^)]*\))?$/i;
 
   // The language dropdown trigger sits above the code editor and contains a chevron icon.
   function languageTrigger() {
-    return [...document.querySelectorAll('button, div, span')].find((e) =>
-      visible(e) && e.querySelector('svg') && LANG_RE.test((e.innerText || '').trim()) &&
-      e.getBoundingClientRect().top < 200 && e.innerText.trim().length < 40);
+    return [...document.querySelectorAll('button,[role="combobox"]')].find((e) => {
+      const label = (e.innerText || e.getAttribute('aria-label') || '').trim();
+      return visible(e) && EDITOR_LANGUAGE_RE.test(label) && e.getBoundingClientRect().top < 240;
+    }) || null;
   }
 
   // Newton lets many questions be solved in several languages; always prefer Python when offered.
@@ -798,14 +800,19 @@
             continue;
           }
           code = c;
-          log(`${gen.model} generated ${code.split('\n').length} lines of ${answerLabel}`, '', code);
+          const tokens = gen.usage?.total ? ` · ${gen.usage.total} tokens` : '';
+          log(`${gen.model} generated ${code.split('\n').length} lines of ${answerLabel}${tokens}`, '', code);
           break;
         }
         if (!code) throw new Error('Could not generate complete code');
         setStatus(`Attempt ${submit}/${MAX_SUBMITS}: replacing the editor contents…`);
         if (submit > 1) log(`Replacing the previous answer with attempt ${submit}`);
         const w = await rpc('monaco.write', { code });
-        if (!w?.ok) throw new Error(`Could not write into the editor (${w?.reason || 'unknown'})`);
+        if (!w?.ok) {
+          await sleep(700);
+          const retryWrite = await rpc('monaco.write', { code });
+          if (!retryWrite?.ok) throw new Error(`Could not write into the editor (${retryWrite?.reason || w?.reason || 'unknown'})`);
+        }
 
         // 2) Submit straight away (local runs of input-based questions were causing false errors).
         await checkpoint();
@@ -840,10 +847,15 @@
         // API/quota/editor failures happen before a grader attempt. Do not burn the
         // five submission slots or silently advance the assignment on these errors.
         if (!submissionStarted) {
+          if (/Could not write into the editor|editor not loaded|no code editor found/i.test(e.message)) {
+            const summary = `Paused because the code editor is unavailable: ${e.message}`;
+            log(summary, 'bad');
+            return { ok: false, halted: true, summary };
+          }
           if (/daily limit|all models are at their daily limit|quota exceeded/i.test(e.message)) {
             const summary = 'Paused on this question because all configured AI models are at their daily quota limit.';
-            showQuotaPopup();
-            log(summary, 'bad');
+            showQuotaPopup(e.message);
+            log(summary, 'bad', e.message);
             return { ok: false, halted: true, summary };
           }
           if (/\b429\b|rate.?limit|timed out|\b503\b|overloaded/i.test(e.message)) {
@@ -895,7 +907,11 @@
         ? `<span class="ok"><b>Accepted</b> · ${esc(result.summary)} · ${result.submits} submission(s)</span>`
         : `<span class="bad"><b>Not solved:</b> ${esc(result.summary)}</span>`);
     } catch (e) {
-      result = { ok: false, summary: e.message };
+      result = {
+        ok: false,
+        halted: /Code editor not found|editor unavailable|no code editor found/i.test(e.message),
+        summary: e.message,
+      };
       setStatus(`<span class="bad">${esc(e.message)}</span>`);
       log(e.message, 'bad');
     } finally {

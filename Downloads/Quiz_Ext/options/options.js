@@ -17,16 +17,18 @@ const ping = (provider, key, model) => chat({
   messages: [{ role: 'user', content: 'Reply with exactly: OK' }],
 });
 
-// Test candidate models in order and keep the ones that answer. We need two for cross-checking.
-async function testModels(provider, key, want) {
-  const candidates = await pickModels(provider, key);
-  const working = [];
-  for (const m of candidates) {
-    if (working.length >= want) { working.push(m); continue; } // untested fallbacks keep their order
-    try { await ping(provider, key, m); working.push(m); }
-    catch (e) { line('muted', `  – ${m} unavailable: ${e.message.slice(0, 120)}`); }
+// Discover models without probing each one: each successful ping consumes quota, and
+// probing every daily-limited model during setup can burn requests before solving.
+async function discoverAndProbe(provider, key) {
+  const models = await pickModels(provider, key);
+  if (!models.length) return { models, working: null, limited: false };
+  try {
+    await ping(provider, key, models[0]);
+    return { models, working: models[0], limited: false };
+  } catch (e) {
+    if (/429/.test(e.message)) return { models, working: null, limited: true, error: e.message };
+    throw e;
   }
-  return working;
 }
 
 $('save').addEventListener('click', async () => {
@@ -42,31 +44,22 @@ $('save').addEventListener('click', async () => {
   if (!geminiKey && !groqKey) line('err', 'Add at least one key (Groq recommended).');
   if (groqKey) {
     try {
-      const models = await testModels('groq', groqKey, 1);
+      const { models, working, limited } = await discoverAndProbe('groq', groqKey);
       await chrome.storage.local.set({ groqModels: models });
-      if (models.length) line('ok', `✓ Groq works. Solver: ${models[0]}${models[1] ? ` · fallback: ${models.slice(1, 3).join(', ')}` : ''}`);
+      if (working) line('ok', `✓ Groq works. Solver: ${working}${models.length > 1 ? ` · ${models.length - 1} configured fallbacks` : ''}`);
+      else if (limited) line('muted', `Groq model ${models[0]} is rate-limited right now. Models were saved; the solver will try its configured fallbacks when needed.`);
       else line('err', '✗ Groq: no working model found');
       const all = await availableModels('groq', groqKey);
       line('muted', `Available on your account: ${all.join(', ')}`);
     } catch (e) { line('err', `✗ Groq: ${e.message}`); }
   }
   if (geminiKey) {
-    // Keep every Flash model for rotation (each has its own daily quota). Only verify the key works;
-    // a model at today's limit is still kept because its quota resets tomorrow.
+    // Keep all models for fallback, but probe only one to avoid spending a request per model.
     try {
-      const models = await pickModels('gemini', geminiKey);
-      let working = null;
-      let limited = 0;
-      for (const m of models) {
-        try { await ping('gemini', geminiKey, m); working = m; break; }
-        catch (e) {
-          if (/429/.test(e.message)) { limited++; continue; }
-          if (/40[13]/.test(e.message)) throw e;
-        }
-      }
+      const { models, working, limited } = await discoverAndProbe('gemini', geminiKey);
       await chrome.storage.local.set({ geminiModels: models });
       if (working) line('ok', `✓ Gemini works (${working}). Image models in rotation: ${models.join(', ')}`);
-      else if (limited) line('err', `Gemini key is valid, but all ${models.length} models are at today's free limit. They reset at midnight Pacific time.`);
+      else if (limited) line('muted', `Gemini model ${models[0]} is rate-limited right now. Models were saved; daily quota resets at midnight Pacific time.`);
       else line('err', '✗ Gemini: no usable model found');
     } catch (e) { line('err', `✗ Gemini: ${e.message}`); }
   }
