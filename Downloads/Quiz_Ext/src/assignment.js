@@ -40,7 +40,8 @@
     if (!a || !b) return false;
     try {
       const left = new URL(a, location.origin), right = new URL(b, location.origin);
-      return left.origin === right.origin && left.pathname === right.pathname;
+      const isNewton = (url) => url.hostname === 'newtonschool.co' || url.hostname.endsWith('.newtonschool.co');
+      return isNewton(left) && isNewton(right) && left.pathname === right.pathname;
     } catch { return false; }
   };
 
@@ -175,7 +176,7 @@
       };
     }
     host.style.display = '';
-    host.classList.toggle('idle', !state.running);
+    root.querySelector('.wrap').classList.toggle('idle', !state.running);
     const go = root.querySelector('.go');
     go.title = state.running ? '' : 'Hover to expand · click to solve';
     root.querySelector('.opt').hidden = kind !== 'assignment' || state.running;
@@ -910,7 +911,7 @@
     }
     if (stopRequested()) { clearJob(); return; }
     const job = loadJob();
-    if (queueNavigation && job?.current && samePageUrl(job.currentUrl, location.href)) {
+    if (queueNavigation && job?.current && (!job.currentUrl || samePageUrl(job.currentUrl, location.href))) {
       job.results[job.current] = result;
       job.current = null;
       job.currentUrl = null;
@@ -935,12 +936,11 @@
       try { await startAssignment(); } finally { state.running = false; ensureUI(); }
     } else {
       const job = loadJob();
-      // A leftover queue must never redirect a manually opened question to an old assignment.
-      // Keep it only when this is the exact question the queue opened and paused on.
-      if (!job?.current || !samePageUrl(job.currentUrl, location.href)) clearJob();
-      // A direct click should never navigate away from the question tab. Queue navigation
-      // is handled only by the automatic resume path below.
-      await runQuestion();
+      // Resume a queued assignment question if its automatic route hook was missed (for
+      // example, after Newton redirects between its subdomains). Standalone questions stay put.
+      const queuedQuestion = !!job?.current && (!job.currentUrl || samePageUrl(job.currentUrl, location.href));
+      if (!queuedQuestion && job) clearJob();
+      await runQuestion({ queueNavigation: queuedQuestion });
     }
   }
 
@@ -975,7 +975,8 @@
         await sleep(3000);
         try { await startAssignment(); } finally { state.running = false; ensureUI(); }
       }
-    } else if ((kind === 'jupyter' || kind === 'code') && job?.current && samePageUrl(job.currentUrl, location.href)) {
+    } else if ((kind === 'jupyter' || kind === 'code') && job?.current &&
+      (!job.currentUrl || samePageUrl(job.currentUrl, location.href))) {
       await sleep(3000);
       await runQuestion({ queueNavigation: true });
     } else if ((kind === 'jupyter' || kind === 'code') && job?.current) {

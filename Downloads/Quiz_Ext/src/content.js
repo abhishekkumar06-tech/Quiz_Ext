@@ -226,7 +226,11 @@
   let host, root, state = { running: false, questions: [], results: {}, log: {} };
 
   function ensureUI() {
-    if (host) { host.style.display = isQuizPage() ? '' : 'none'; return; }
+    if (host) {
+      host.style.display = isQuizPage() ? '' : 'none';
+      root.querySelector('.wrap')?.classList.toggle('idle', !state.running);
+      return;
+    }
     if (!isQuizPage()) return;
     host = document.createElement('div');
     host.id = 'nqs-host';
@@ -235,8 +239,11 @@
       <style>
         :host { all: initial; }
         .wrap { position: fixed; right: 20px; bottom: 90px; z-index: 2147483647; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1a1a1a; }
-        .fab { background: #111; color: #fff; border: 0; border-radius: 999px; padding: 11px 18px; font-weight: 600; font-size: 14px; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+        .fab { background: #111; color: #fff; border: 0; border-radius: 999px; padding: 11px 18px; font-weight: 600; font-size: 14px; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.25); transition: width .16s ease, height .16s ease, border-radius .16s ease; }
         .fab:disabled { opacity: .6; cursor: default; }
+        .wrap.idle:not(:hover):not(:focus-within) .panel { display: none !important; }
+        .wrap.idle:not(:hover):not(:focus-within) .fab:not(.stopq) { width: 50px; height: 50px; padding: 0; border-radius: 50%; font-size: 0; display: inline-grid; place-items: center; }
+        .wrap.idle:not(:hover):not(:focus-within) .fab:not(.stopq)::before { content: '⚡'; font-size: 23px; }
         .panel { width: 360px; max-height: 60vh; overflow: auto; background: #fff; border: 1px solid #e3e3e3; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.18); margin-bottom: 10px; }
         .panel[hidden] { display: none; }
         .head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600; position: sticky; top: 0; background: #fff; }
@@ -265,6 +272,7 @@
         <button class="fab stopq" hidden style="background:#fff;color:#111;border:1px solid #ccc;margin-right:6px">Stop</button><button class="fab">⚡ Solve quiz</button>
       </div>`;
     document.documentElement.appendChild(host);
+    root.querySelector('.wrap').classList.add('idle');
     root.querySelector('.fab:not(.stopq)').addEventListener('click', () => { localStorage.removeItem(STOP_KEY); run(); });
     root.querySelector('.stopq').addEventListener('click', () => {
       localStorage.setItem(STOP_KEY, '1');
@@ -353,6 +361,7 @@
       return;
     }
     state = { running: true, questions: [], results: {}, log: {} };
+    $('.wrap').classList.remove('idle');
     const fab = $('.fab:not(.stopq)');
     fab.disabled = true;
     $('.stopq').hidden = false;
@@ -478,6 +487,7 @@
       root.querySelector('.opt')?.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
     } finally {
       state.running = false;
+      $('.wrap').classList.add('idle');
       fab.disabled = false;
       $('.stopq').hidden = true;
       render();
