@@ -859,7 +859,7 @@
     throw new Error('Unsupported question page');
   }
 
-  async function runQuestion() {
+  async function runQuestion({ queueNavigation = false } = {}) {
     if (stopRequested()) return;
     state.running = true; state.paused = false;
     ensureUI();
@@ -886,7 +886,7 @@
     }
     if (stopRequested()) { clearJob(); return; }
     const job = loadJob();
-    if (job?.current && samePageUrl(job.currentUrl, location.href)) {
+    if (queueNavigation && job?.current && samePageUrl(job.currentUrl, location.href)) {
       job.results[job.current] = result;
       job.current = null;
       job.currentUrl = null;
@@ -914,6 +914,8 @@
       // A leftover queue must never redirect a manually opened question to an old assignment.
       // Keep it only when this is the exact question the queue opened and paused on.
       if (!job?.current || !samePageUrl(job.currentUrl, location.href)) clearJob();
+      // A direct click should never navigate away from the question tab. Queue navigation
+      // is handled only by the automatic resume path below.
       await runQuestion();
     }
   }
@@ -951,7 +953,7 @@
       }
     } else if ((kind === 'jupyter' || kind === 'code') && job?.current && samePageUrl(job.currentUrl, location.href)) {
       await sleep(3000);
-      await runQuestion();
+      await runQuestion({ queueNavigation: true });
     } else if ((kind === 'jupyter' || kind === 'code') && job?.current) {
       // Stale queue state can otherwise send this tab back to an unrelated assignment.
       clearJob();
