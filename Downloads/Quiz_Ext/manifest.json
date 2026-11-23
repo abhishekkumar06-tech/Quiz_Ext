@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Newton Quiz Solver",
+  "version": "0.4.1",
+  "description": "AI agent for Newton School practice work: solves quiz MCQs (text + images) and coding assignments (Jupyter, Verilog). Never runs on contests.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "https://my.newtonschool.co/*",
+    "https://*.newtonschool.co/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.groq.com/*",
+    "https://*.cloudfront.net/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://my.newtonschool.co/*"],
+      "js": ["src/run-queue.js", "src/content.js", "src/assignment.js", "src/scanner.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Newton Quiz Solver settings"
+  },
+  "options_page": "options/options.html"
+}
