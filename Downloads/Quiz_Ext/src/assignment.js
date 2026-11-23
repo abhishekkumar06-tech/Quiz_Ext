@@ -808,7 +808,9 @@
         }
         history.push({
           stage: `graded submission ${submit}`, code,
-          feedback: `${res.summary}. Hidden test inputs are not shown.\n${diagnosis}\nRe-read the ENTIRE problem statement (every requirement, input/output format, reset/enable priority, edge cases) and fix the solution.`,
+          feedback: databaseMode === 'sql'
+            ? `${res.summary}. The grader provided no test details. This exact SQL failed: independently re-check the requested operations, transaction boundaries and order, dialect, identifiers, and expected result shape. Return the shortest corrected SQL; do not repeat it with only formatting changes or add unrequested statements.`
+            : `${res.summary}. Hidden test inputs are not shown.\n${diagnosis}\nRe-read the ENTIRE problem statement (every requirement, input/output format, reset/enable priority, edge cases) and fix the solution.`,
         });
       } catch (e) {
         if (/Stopped by user|Extension was reloaded|No API key/i.test(e.message)) throw e;

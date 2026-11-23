@@ -37,10 +37,14 @@ function buildPrompt(job) {
     parts.push(`## Notebook (read-only cells are shown for context; you may only replace the EDITABLE cell)\n${job.context}`);
     parts.push(`## Current EDITABLE cell (return its full new contents; keep the function signature and the marker comments)\n\`\`\`python\n${job.editable}\n\`\`\``);
   } else {
-    parts.push(`## Language: ${job.language}\n## Starter template (return the full new file, keeping the template's class/function names and signatures)\n\`\`\`\n${job.editable}\n\`\`\``);
+    if (job.databaseMode === 'sql') {
+      parts.push(`## Database engine: ${job.language}`);
+    } else {
+      parts.push(`## Language: ${job.language}\n## Starter template (return the full new file, keeping the template's class/function names and signatures)\n\`\`\`\n${job.editable}\n\`\`\``);
+    }
     const hdl = /verilog|vhdl|icarus|systemverilog/i.test(job.language || '');
     if (job.databaseMode === 'sql') {
-      parts.push(`## MODE: SQL QUERY\nWrite the complete SQL answer expected by this task and database engine. Use the exact table and column names given in the problem; never leave generic placeholders such as table_name, old_column_name, or new_column_name when real names are provided. Include every requested statement (for example, both a schema change and a SELECT when the task asks to display the records). Short answers with one or two SQL statements are valid. Use only the described schema; do not invent tables or columns. Return SQL only, with no explanation or sample output.`);
+      parts.push(`## MODE: SQL QUERY\nReturn the shortest complete SQL answer that satisfies every explicit requirement. Use the exact table and column names from the problem and the stated database engine; never invent schema. Include multiple statements only when the task explicitly requires them. Add BEGIN/COMMIT/ROLLBACK only when transaction control is explicitly requested. Add a SELECT only when the requested result requires returning or displaying rows; do not add a verification query. Do not add comments, explanations, sample output, or formatting-only statements. Return SQL only.`);
     } else if (job.databaseMode === 'mongodb') {
       parts.push(`## MODE: MONGODB SHELL COMMANDS\nThe editor accepts MongoDB shell commands. MongoDB shell syntax is JavaScript-like, but do not write a general JavaScript program. Return only the MongoDB command(s) the task asks for, such as db.collection.insertOne(...), db.collection.find(...), or db.collection.aggregate([...]). Do not use const/let/var, console.log, JSON.stringify, or wrap commands in a function unless the problem explicitly asks for those. Do not add verification queries or extra operations unless requested. Follow the requested answer shape, collection/field names, and output exactly; do not invent schema.`);
     } else if (hdl) {
@@ -61,7 +65,11 @@ function buildPrompt(job) {
 }
 
 async function generateCode(job, settings, onProgress = () => {}) {
-  const messages = [{ role: 'system', content: CODE_SYSTEM }, { role: 'user', content: buildPrompt(job) }];
+  const sqlSystem = `You solve auto-graded SQL tasks. Read the full requirement and database dialect carefully. Produce the minimal correct SQL statements and nothing extra. Preserve required transaction semantics, statement order, exact identifiers, and requested result shape. Never add a transaction wrapper, SELECT, or other statement unless the task asks for it.`;
+  const messages = [
+    { role: 'system', content: job.databaseMode === 'sql' ? sqlSystem : CODE_SYSTEM },
+    { role: 'user', content: buildPrompt(job) },
+  ];
   const effort = job.history?.length ? 'high' : 'medium';
   const chain = [];
   if (settings.groqKey && settings.groqModels?.length) {
@@ -71,9 +79,10 @@ async function generateCode(job, settings, onProgress = () => {}) {
   if (settings.geminiKey && settings.geminiModels?.length) {
     chain.push({ provider: 'gemini', key: settings.geminiKey, models: settings.geminiModels.slice(0, 1), reasoning: job.databaseMode && job.history?.length ? 'low' : effort === 'high' ? 'high' : 'low' });
   }
-  // After two failed graded submissions, let a different model family try first.
+  // Alternate provider families after each graded failure instead of spending two
+  // submissions retrying the same model family with only a generic Wrong Answer signal.
   const graded = (job.history || []).filter((h) => /graded submission/.test(h.stage)).length;
-  if (graded >= 2 && graded % 2 === 0 && chain.length > 1) chain.push(chain.shift());
+  if (graded % 2 === 1 && chain.length > 1) chain.push(chain.shift());
   const errors = [];
   for (const c of chain) {
     try {
@@ -83,7 +92,7 @@ async function generateCode(job, settings, onProgress = () => {}) {
       onProgress(`Attempt ${job.attempt || 1}/5: requesting ${providerName} (${c.models.join(', ')})…`);
       const r = await chat({
         ...c, messages, patient: false, timeoutMs: 15000,
-        maxTokens: job.databaseMode ? 1600 : undefined,
+        maxTokens: job.databaseMode === 'sql' ? 700 : job.databaseMode === 'mongodb' ? 1200 : undefined,
         onStatus: (status) => onProgress(`${providerName}: ${status}`),
       });
       onProgress(`Received a response from ${providerName} ${r.model}; checking the generated answer…`);
