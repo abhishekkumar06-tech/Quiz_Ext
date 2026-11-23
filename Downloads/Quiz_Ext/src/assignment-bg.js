@@ -92,7 +92,9 @@ async function generateCode(job, settings, onProgress = () => {}) {
       onProgress(`Attempt ${job.attempt || 1}/5: requesting ${providerName} (${c.models.join(', ')})…`);
       const r = await chat({
         ...c, messages, patient: false, timeoutMs: 15000,
-        maxTokens: job.databaseMode === 'sql' ? 700 : job.databaseMode === 'mongodb' ? 1200 : undefined,
+        // SQL can need several expressions/clauses; too small a completion budget can
+        // cut a valid-looking response off mid-expression (the grader then says Compilation Error).
+        maxTokens: job.databaseMode === 'sql' ? 1800 : job.databaseMode === 'mongodb' ? 1200 : undefined,
         onStatus: (status) => onProgress(`${providerName}: ${status}`),
       });
       onProgress(`Received a response from ${providerName} ${r.model}; checking the generated answer…`);

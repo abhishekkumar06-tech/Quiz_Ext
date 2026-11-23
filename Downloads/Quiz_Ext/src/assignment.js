@@ -127,6 +127,17 @@
           .row { display: flex; gap: 8px; align-items: center; }
           button.main { background: #111; color: #fff; border: 0; border-radius: 999px; padding: 11px 18px; font-weight: 600; font-size: 14px; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
           button.main:disabled { opacity: .5; cursor: default; }
+          .wrap.idle:not(:hover):not(:focus-within) .panel,
+          .wrap.idle:not(:hover):not(:focus-within) .opt,
+          .wrap.idle:not(:hover):not(:focus-within) .pause,
+          .wrap.idle:not(:hover):not(:focus-within) .stop { display: none !important; }
+          .wrap.idle:not(:hover):not(:focus-within) .row { width: 50px; height: 50px; }
+          .wrap.idle:not(:hover):not(:focus-within) button.main.go {
+            width: 50px; height: 50px; padding: 0; border-radius: 50%; font-size: 0;
+            display: grid; place-items: center; transition: width .16s ease, height .16s ease, border-radius .16s ease;
+          }
+          .wrap.idle:not(:hover):not(:focus-within) button.main.go::before { content: '⚡'; font-size: 23px; }
+          .wrap.idle button.main.go { transition: width .16s ease, height .16s ease, border-radius .16s ease; }
           button.sec { background: #fff; color: #111; border: 1px solid #ccc; border-radius: 999px; padding: 9px 14px; font-weight: 600; cursor: pointer; }
           label.opt { background: #fff; border: 1px solid #ddd; border-radius: 999px; padding: 6px 10px; font-size: 12px; display: flex; gap: 6px; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
           details summary { cursor: pointer; }
@@ -164,7 +175,9 @@
       };
     }
     host.style.display = '';
+    host.classList.toggle('idle', !state.running);
     const go = root.querySelector('.go');
+    go.title = state.running ? '' : 'Hover to expand · click to solve';
     root.querySelector('.opt').hidden = kind !== 'assignment' || state.running;
     root.querySelector('.pause').hidden = !state.running;
     root.querySelector('.stop').hidden = !state.running;
@@ -660,6 +673,11 @@
     return m ? { passed: m[1] === '-' ? null : Number(m[1]), total: Number(m[2]), status: m[3].trim(), text: t } : { text: t };
   }
 
+  // Compilation Error is a final grader result, not an active compile state.
+  // Keep this list limited to explicit in-progress statuses so terminal failures
+  // return immediately and can be used to improve the next attempt.
+  const graderIsPending = (status) => /\b(?:queued|queue|running|pending|processing|judging|compiling)\b|\bcompilation\s+(?:queued|in progress)\b/i.test(status || '');
+
   function openCodeSubmissions() {
     if (codePanel()) return true;
     const named = [...document.querySelectorAll('button,[role="button"],[title],[aria-label]')].find((el) =>
@@ -691,10 +709,10 @@
       openCodeSubmissions();
       await sleep(500);
     }
-    await waitFor(() => { const p = codePanel(); return p && (p.passed == null || /queue|running|compil|pending|process/i.test(p.status || '') || p.text !== before); }, 15000, 200);
+    await waitFor(() => { const p = codePanel(); return p && (p.passed == null || graderIsPending(p.status) || p.text !== before); }, 15000, 200);
     const final = await waitFor(() => {
       const p = codePanel();
-      return p && p.passed != null && !/queue|running|compil|pending|process/i.test(p.status || '') ? p : null;
+      return p && p.passed != null && !graderIsPending(p.status) ? p : null;
     }, 180000, 400);
     if (!final) throw new Error('Timed out waiting for the submission result');
     // Close the "Congratulations" dialog if it appeared.
@@ -761,14 +779,18 @@
           if (!/\bsys\./.test(c)) c = c.replace(/^\s*import sys\s*\n/gm, '');
           const missing = requiredNames.filter((n) => !new RegExp(`\\b(def|class)\\s+${n}\\b`).test(c));
           const tooShort = !databaseMode && c.trim().split('\n').length < 3;
+          const sqlIncomplete = databaseMode === 'sql' && /(?:^|[\s(])(?:SELECT|FROM|WHERE|AND|OR|AS|ORDER BY|GROUP BY|JOIN|ON|SET|VALUES|INTO|UPDATE|WITH|HAVING|LIMIT|RETURNING|LENGTH|SUBSTRING|POSITION|LOWER|TRIM)\s*$/i
+            .test(c.trim().replace(/;+\s*$/, ''));
           const sqlPlaceholders = databaseMode === 'sql' &&
             /\b(?:table_name|old_column_name|new_column_name|your_table|your_column|old_column|new_column)\b|<\s*(?:table|column)\b/i.test(c);
-          if (missing.length || tooShort || sqlPlaceholders) {
-            const reason = sqlPlaceholders ? 'generic placeholder names remain' : `missing ${missing.join(', ') || 'required code'}`;
+          if (missing.length || tooShort || sqlPlaceholders || sqlIncomplete) {
+            const reason = sqlPlaceholders ? 'generic placeholder names remain' : sqlIncomplete ? 'SQL response ends with an unfinished clause or expression' : `missing ${missing.join(', ') || 'required code'}`;
             log(`Generated answer is incomplete (${reason}); regenerating`, 'warn', c);
             history.push({
-              stage: sqlPlaceholders ? 'SQL placeholders remain' : 'incomplete code', code: c,
-              feedback: sqlPlaceholders
+              stage: sqlPlaceholders ? 'SQL placeholders remain' : sqlIncomplete ? 'incomplete SQL' : 'incomplete code', code: c,
+              feedback: sqlIncomplete
+                ? 'The SQL answer was cut off before the statement was complete. Return the complete query, including the expression after the final function/clause and every required FROM, WHERE, and ORDER BY section.'
+                : sqlPlaceholders
                 ? `Replace generic SQL placeholders with the exact names from the problem. Do not return table_name, old_column_name, or new_column_name.`
                 : `Your code was incomplete. Return the full file including: ${requiredNames.join(', ')}. A short SQL or MongoDB answer may be complete; do not add filler lines.`,
             });
